@@ -1,10 +1,10 @@
-use std::mem;
+use std::{collections::HashMap, mem};
 
 use enumflags2::{BitFlags, bitflags};
 use serde::{Serialize, Deserialize};
 
 // Configuration data structure. This is what we edit and persist to the disk.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MinecraftServerConfiguration {
 	pub bonusChest: bool,
 	pub demo: bool,
@@ -19,48 +19,82 @@ pub struct MinecraftServerConfiguration {
 	pub world: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ConfigurationOptionType {
+	Bool(bool),
+	OptionU16(Option<u16>),
+	OptionString(Option<String>),
+}
+impl MinecraftServerConfiguration {
+	fn set(&mut self, property: String, value: ConfigurationOptionType) {
+		let property = property.as_str();
+		if let ConfigurationOptionType::Bool(value) = value {
+			match property {
+				"bonusChest" => self.bonusChest = value,
+				"demo" => self.demo = value,
+				"eraseCache" => self.eraseCache = value,
+				"forceUpgrade" => self.forceUpgrade = value,
+				"initSettings" => self.initSettings = value,
+				"gui" => self.gui = value,
+				_ => {},
+			}
+		} else if let ConfigurationOptionType::OptionU16(value) = value {
+			match property {
+				"port" => self.port = value,
+				_ => {},
+			}
+		} else if let ConfigurationOptionType::OptionString(value) = value {
+			match property {
+				"universe" => self.universe = value,
+				"world" => self.world = value,
+				_ => {},
+			}
+		}
+	}
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum AppState {
+pub enum AppState {
 	ChoiceMenu,
 	Running,
 	Exited,
 	EditingConfiguration,
 }
-#[derive(Debug, Clone, Copy)]
-enum AppEvent {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum AppEvent {
 	StartServer,
 	Exit,
 	SelectedOption,
 }
 
-#[derive(Debug, PartialEq)]
-enum EditorState {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum EditorState {
 	SelectOnOff,
 	NumberInput,
 	TextInput,
 	SelectValueOrNone,
 }
-#[derive(Debug, Clone, Copy)]
-enum EditorEvent {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum EditorEvent {
 	SubmitValue,
 	SelectedValue,
 	SelectedNone,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Event {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Event {
 	AppEvent(AppEvent),
 	EditorEvent(EditorEvent)
 }
 
 #[bitflags]
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum ConfigurationOptionType {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ConfigurationOptionTypeFlag {
 	Bool,
 	U16,
 	String,
-	Option
+	Option,
 }
 
 #[derive(Debug, Clone)]
@@ -68,44 +102,108 @@ pub struct ConfigurationOption {
 	pub property: String,
 	pub name: String,
 	pub description: String,
-	pub r#type: BitFlags<ConfigurationOptionType>,
+	pub r#type: BitFlags<ConfigurationOptionTypeFlag>,
 }
 
 #[derive(Debug, Clone)]
-enum Payload {
-	ConfigurationOption(ConfigurationOption)
+pub enum Payload {
+	ConfigurationOption(ConfigurationOption),
+	ConfigurationOptionType(ConfigurationOptionType)
 }
 
-struct Machine {
-	state: AppState,
-	editorState: Option<EditorState>,
+pub struct Machine {
+	pub state: AppState,
+	pub editorState: Option<EditorState>,
+	pub selectedConfigurationOption: Option<ConfigurationOption>,
+	pub configuration: MinecraftServerConfiguration,
 }
 
 impl Machine {
-	fn dispatch(&mut self, event: Event, payload: Option<Payload>) -> () {
+	fn set_option_value(&mut self, payload: ConfigurationOptionType) {
+		let property = self.selectedConfigurationOption.clone().expect("A configuration option was never selected before attempting to set its value.").property;
+		self.configuration.set(property, payload);
+		self.selectedConfigurationOption = None;
+	}
+
+	pub fn dispatch(&mut self, event: Event, payload: Option<Payload>) -> () {
 		let state = self.state.clone();
 		match event {
     	Event::AppEvent(event) => { self.state = match (state, event) {
 				(AppState::ChoiceMenu, AppEvent::StartServer) => AppState::Running,
 				(AppState::ChoiceMenu, AppEvent::Exit) => AppState::Exited,
 				(AppState::ChoiceMenu, AppEvent::SelectedOption) => {
-					let Payload::ConfigurationOption(payload) = payload.expect("A ConfigurationOption payload was not provided when the SelectedOption event was dispatched from the ChoiceMenu state.");
-
-					self.editorState = Some(if payload.r#type == ConfigurationOptionType::Option {
-						EditorState::SelectValueOrNone
-					} else if payload.r#type == ConfigurationOptionType::Bool {
-						EditorState::SelectOnOff
-					} else if payload.r#type == ConfigurationOptionType::U16 {
-						EditorState::NumberInput
-					} else {
-						EditorState::TextInput
-					});
-
+					if let Payload::ConfigurationOption(payload) = payload.expect("A ConfigurationOption payload was not provided when the SelectedOption event was dispatched from the ChoiceMenu state.") {
+						self.selectedConfigurationOption = Some(payload.clone());
+						self.editorState = Some(if payload.r#type == ConfigurationOptionTypeFlag::Option {
+							EditorState::SelectValueOrNone
+						} else if payload.r#type == ConfigurationOptionTypeFlag::Bool {
+							EditorState::SelectOnOff
+						} else if payload.r#type == ConfigurationOptionTypeFlag::U16 {
+							EditorState::NumberInput
+						} else {
+							EditorState::TextInput
+						});
+					}
 					AppState::EditingConfiguration
 				},
 				_ => state,
 			}}
 			Event::EditorEvent(event) => {
+				let optionEditorState = self.editorState.clone();
+				let editorState = optionEditorState.expect("An EditorEvent has been dispatched while not in the EditorState");
+				let none: Option<EditorState> = None;
+				self.editorState = match (editorState, event) {
+					(EditorState::SelectOnOff, EditorEvent::SubmitValue) => {
+						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
+							self.set_option_value(value);
+							self.state = AppState::ChoiceMenu;
+							none
+						} else {
+							optionEditorState
+						}
+					}
+					(EditorState::NumberInput, EditorEvent::SubmitValue) => {
+						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
+							self.set_option_value(value);
+							self.state = AppState::ChoiceMenu;
+							none
+						} else {
+							optionEditorState
+						}
+					}
+					(EditorState::TextInput, EditorEvent::SubmitValue) => {
+						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
+							self.set_option_value(value);
+							self.state = AppState::ChoiceMenu;
+							none
+						} else {
+							optionEditorState
+						}
+					}
+					(EditorState::SelectValueOrNone, EditorEvent::SelectedValue) => {
+						let selected = self.selectedConfigurationOption.clone().expect("");
+						if selected.r#type == ConfigurationOptionTypeFlag::U16 {
+							Some(EditorState::NumberInput)
+						} else if selected.r#type == ConfigurationOptionTypeFlag::String {
+							Some(EditorState::TextInput)
+						} else {
+							optionEditorState
+						}
+					}
+					(EditorState::SelectValueOrNone, EditorEvent::SelectedNone) => {
+						let selected = self.selectedConfigurationOption.clone().expect("");
+						if selected.r#type == ConfigurationOptionTypeFlag::U16 {
+							let none = ConfigurationOptionType::OptionU16(None);
+							self.set_option_value(none);
+						} else if selected.r#type == ConfigurationOptionTypeFlag::String {
+							let none = ConfigurationOptionType::OptionString(None);
+							self.set_option_value(none);
+						}
+						self.state = AppState::ChoiceMenu;
+						None
+					}
+					_ => optionEditorState,
+				}
 			}
 		}
 	}
