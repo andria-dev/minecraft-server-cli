@@ -1,36 +1,17 @@
-use std;
-use std::io;
+mod machine;
+use machine::{ConfigurationOption, ConfigurationOptionType, MinecraftServerConfiguration};
+
+use std::{self, collections::HashMap};
 use std::fs;
 
 use dialoguer::Select;
+use dialoguer::Confirm;
 use dialoguer::Input;
 
 use ron;
-use serde::{Serialize, Deserialize};
-
-#[derive(Serialize, Deserialize, Debug)]
-struct MinecraftServerConfiguration {
-	bonusChest: bool,
-	demo: bool,
-	eraseCache: bool,
-	forceUpgrade: bool,
-	initSettings: bool,
-	gui: bool,
-	port: Option<u32>,
-	safeMode: bool,
-	serverId: Option<String>,
-	singleplayer: bool,
-	universe: Option<String>,
-	world: Option<String>,
-}
-
-#[derive(Debug)]
-struct ConfigurationOption<'a> {
-	property: &'a str,
-	name: &'a str,
-	description: &'a str,
-	r#type: &'a str,
-}
+use enumflags2::make_bitflags;
+use statechart::*;
+use strum_macros::Display;
 
 fn get_configuration_path() -> String {
 	let path_arg: Option<String> = std::env::args().nth(1);
@@ -47,23 +28,8 @@ fn get_configuration_path() -> String {
 	}
 }
 
-fn read_configuration() -> Option<MinecraftServerConfiguration> {
-	let result = fs::read_to_string(get_configuration_path() + "msc-configuration.ron");
-	if let Ok(configuration_string) = result {
-		return match ron::from_str::<MinecraftServerConfiguration>(&configuration_string) {
-			Ok(configuration) => Some(configuration),
-			Err(error) => {
-				// TODO: log the error
-				return None;
-			},
-		};
-	} else {
-		return None;
-	}
-}
-
-fn main() {
-	let configuration = read_configuration().unwrap_or(MinecraftServerConfiguration {
+fn get_configuration() -> MinecraftServerConfiguration {
+	let default_configuration = MinecraftServerConfiguration {
 		bonusChest: true,
 		demo: false,
 		eraseCache: false,
@@ -72,58 +38,104 @@ fn main() {
 		gui: false,
 		port: None,
 		safeMode: false,
-		serverId: None,
 		singleplayer: false,
 		universe: None,
 		world: None,
-	});
+	};
 
-	let configuration_options_information = [
+	let result = fs::read_to_string(get_configuration_path() + "msc-configuration.ron");
+	if let Ok(configuration_string) = result {
+		if let Ok(configuration) = ron::from_str::<MinecraftServerConfiguration>(&configuration_string) {
+			return configuration;
+		} else {
+			// TODO: Log error: Unable to parse "msc-configuration.ron", falling back to default configuration.
+		}
+	} else {
+		// TODO: Log error: Unable to read "msc-configuration.ron", falling back to default configuration.
+	}
+
+	return default_configuration;
+}
+
+fn main() {
+	let configuration_options_information = vec![
 		ConfigurationOption {
-			property: "bonusChest",
-			name: "Bonus chest",
-			description: "Whether or not to add the bonus chest when creating a new world.",
-			r#type: "bool",
+			property: "bonusChest".to_string(),
+			name: "Bonus chest".to_string(),
+			description: "Whether or not to add the bonus chest when creating a new world.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "demo",
-			name: "Demo mode",
-			description: "Shows the players a demo pop-up, players can't place/break/eat once the demo expires.",
-			r#type: "bool",
+			property: "demo".to_string(),
+			name: "Demo mode".to_string(),
+			description: "Shows the players a demo pop-up, players can't place/break/eat once the demo expires.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "eraseCache",
-			name: "Erase the cache",
-			description: "Erases the lighting caches, etc.",
-			r#type: "bool",
+			property: "eraseCache".to_string(),
+			name: "Erase the cache".to_string(),
+			description: "Erases the lighting caches, etc.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "forceUpgrade",
-			name: "Force an upgrade",
-			description: "Forces an upgrade on all the chunks.",
-			r#type: "bool",
+			property: "forceUpgrade".to_string(),
+			name: "Force an upgrade".to_string(),
+			description: "Forces an upgrade on all the chunks.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "initSettings",
-			name: "Initialize server settings",
-			description: "Initializes 'server.properties' and 'eula.txt', then quits.",
-			r#type: "bool",
+			property: "initSettings".to_string(),
+			name: "Initialize server settings".to_string(),
+			description: "Initializes 'server.properties' and 'eula.txt', then quits.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "gui",
-			name: "GUI mode",
-			description: "When enabled, opens the GUI upon launch of the server.",
-			r#type: "bool",
+			property: "gui".to_string(),
+			name: "GUI mode".to_string(),
+			description: "When enabled, opens the GUI upon launch of the server.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
 		},
 		ConfigurationOption {
-			property: "port",
-			name: "Port",
-			description: "Which port to listen on, overrides the server.properties value.",
-			r#type: "number",
+			property: "port".to_string(),
+			name: "Port".to_string(),
+			description: "Which port to listen on, overrides the server.properties value.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Option | U16}),
 		},
+		ConfigurationOption {
+			property: "safeMode".to_string(),
+			name: "Safe mode".to_string(),
+			description: "Loads level with vanilla data pack only.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
+		},
+		ConfigurationOption {
+			property: "singleplayer".to_string(),
+			name: "Single-player mode".to_string(),
+			description: "Runs the server in offline mode without authentication. This is insecure, do not use this when online.".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Bool}),
+		},
+		ConfigurationOption {
+			property: "universe".to_string(),
+			name: "Universe name".to_string(),
+			description: "".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Option | String}),
+		},
+		ConfigurationOption {
+			property: "world".to_string(),
+			name: "World name".to_string(),
+			description: "".to_string(),
+			r#type: make_bitflags!(ConfigurationOptionType::{Option | String}),
+		}
 	];
 
+	// TODO: add styles via the "console" crate while mapping.
+	let configuration_option_names: Vec<String> = configuration_options_information.into_iter().map(|option_information| option_information.name).collect();
+	let select_options = vec![
+		vec!["Start server now".to_string(), "Exit".to_string()],
+		configuration_option_names
+	].concat();
+
 	Select::new()
-		.with_prompt("Please select the values you wish to change")
-		.items(&[1]);
+		.with_prompt("Please select the value you wish to change")
+		.items(&select_options)
+    .interact();
 }
