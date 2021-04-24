@@ -1,10 +1,9 @@
-use std::{collections::HashMap, mem};
-
 use enumflags2::{BitFlags, bitflags};
 use serde::{Serialize, Deserialize};
 
 // Configuration data structure. This is what we edit and persist to the disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(non_snake_case)]
 pub struct MinecraftServerConfiguration {
 	pub bonusChest: bool,
 	pub demo: bool,
@@ -36,6 +35,8 @@ impl MinecraftServerConfiguration {
 				"forceUpgrade" => self.forceUpgrade = value,
 				"initSettings" => self.initSettings = value,
 				"gui" => self.gui = value,
+				"safeMode" => self.safeMode = value,
+				"singleplayer" => self.singleplayer = value,
 				_ => {},
 			}
 		} else if let ConfigurationOptionType::OptionU16(value) = value {
@@ -49,6 +50,24 @@ impl MinecraftServerConfiguration {
 				"world" => self.world = value,
 				_ => {},
 			}
+		}
+	}
+
+	pub fn get(&self, property: String) -> ConfigurationOptionType {
+		let property = property.as_str();
+		match property {
+			"bonusChest" => ConfigurationOptionType::Bool(self.bonusChest),
+			"demo" => ConfigurationOptionType::Bool(self.demo),
+			"eraseCache" => ConfigurationOptionType::Bool(self.eraseCache),
+			"forceUpgrade" => ConfigurationOptionType::Bool(self.forceUpgrade),
+			"initSettings" => ConfigurationOptionType::Bool(self.initSettings),
+			"gui" => ConfigurationOptionType::Bool(self.gui),
+			"port" => ConfigurationOptionType::OptionU16(self.port),
+			"safeMode" => ConfigurationOptionType::Bool(self.safeMode),
+			"singleplayer" => ConfigurationOptionType::Bool(self.singleplayer),
+			"universe" => ConfigurationOptionType::OptionString(self.universe.clone()),
+			"world" => ConfigurationOptionType::OptionString(self.world.clone()),
+			_ => ConfigurationOptionType::OptionString(None),
 		}
 	}
 }
@@ -113,16 +132,16 @@ pub enum Payload {
 
 pub struct Machine {
 	pub state: AppState,
-	pub editorState: Option<EditorState>,
-	pub selectedConfigurationOption: Option<ConfigurationOption>,
+	pub editor_state: Option<EditorState>,
+	pub selected_configuration_option: Option<ConfigurationOption>,
 	pub configuration: MinecraftServerConfiguration,
 }
 
 impl Machine {
 	fn set_option_value(&mut self, payload: ConfigurationOptionType) {
-		let property = self.selectedConfigurationOption.clone().expect("A configuration option was never selected before attempting to set its value.").property;
+		let property = self.selected_configuration_option.clone().expect("A configuration option was never selected before attempting to set its value.").property;
 		self.configuration.set(property, payload);
-		self.selectedConfigurationOption = None;
+		self.selected_configuration_option = None;
 	}
 
 	pub fn dispatch(&mut self, event: Event, payload: Option<Payload>) -> () {
@@ -133,12 +152,12 @@ impl Machine {
 				(AppState::ChoiceMenu, AppEvent::Exit) => AppState::Exited,
 				(AppState::ChoiceMenu, AppEvent::SelectedOption) => {
 					if let Payload::ConfigurationOption(payload) = payload.expect("A ConfigurationOption payload was not provided when the SelectedOption event was dispatched from the ChoiceMenu state.") {
-						self.selectedConfigurationOption = Some(payload.clone());
-						self.editorState = Some(if payload.r#type == ConfigurationOptionTypeFlag::Option {
+						self.selected_configuration_option = Some(payload.clone());
+						self.editor_state = Some(if payload.r#type.contains(ConfigurationOptionTypeFlag::Option) {
 							EditorState::SelectValueOrNone
-						} else if payload.r#type == ConfigurationOptionTypeFlag::Bool {
+						} else if payload.r#type.contains(ConfigurationOptionTypeFlag::Bool) {
 							EditorState::SelectOnOff
-						} else if payload.r#type == ConfigurationOptionTypeFlag::U16 {
+						} else if payload.r#type.contains(ConfigurationOptionTypeFlag::U16) {
 							EditorState::NumberInput
 						} else {
 							EditorState::TextInput
@@ -146,63 +165,64 @@ impl Machine {
 					}
 					AppState::EditingConfiguration
 				},
+				(AppState::Running, AppEvent::Exit) => AppState::Exited,
 				_ => state,
 			}}
 			Event::EditorEvent(event) => {
-				let optionEditorState = self.editorState.clone();
-				let editorState = optionEditorState.expect("An EditorEvent has been dispatched while not in the EditorState");
+				let option_editor_state = self.editor_state.clone();
+				let editor_state = option_editor_state.expect("An EditorEvent has been dispatched while not in the EditorState");
 				let none: Option<EditorState> = None;
-				self.editorState = match (editorState, event) {
+				self.editor_state = match (editor_state, event) {
 					(EditorState::SelectOnOff, EditorEvent::SubmitValue) => {
 						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
 							self.set_option_value(value);
 							self.state = AppState::ChoiceMenu;
 							none
 						} else {
-							optionEditorState
+							option_editor_state
 						}
 					}
 					(EditorState::NumberInput, EditorEvent::SubmitValue) => {
-						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
+						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected a number (u16) or None.") {
 							self.set_option_value(value);
 							self.state = AppState::ChoiceMenu;
 							none
 						} else {
-							optionEditorState
+							option_editor_state
 						}
 					}
 					(EditorState::TextInput, EditorEvent::SubmitValue) => {
-						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected true or false.") {
+						if let Payload::ConfigurationOptionType(value) = payload.expect("Expected text (String) or None.") {
 							self.set_option_value(value);
 							self.state = AppState::ChoiceMenu;
 							none
 						} else {
-							optionEditorState
+							option_editor_state
 						}
 					}
 					(EditorState::SelectValueOrNone, EditorEvent::SelectedValue) => {
-						let selected = self.selectedConfigurationOption.clone().expect("");
-						if selected.r#type == ConfigurationOptionTypeFlag::U16 {
+						let selected = self.selected_configuration_option.clone().expect("");
+						if selected.r#type.contains(ConfigurationOptionTypeFlag::U16) {
 							Some(EditorState::NumberInput)
-						} else if selected.r#type == ConfigurationOptionTypeFlag::String {
+						} else if selected.r#type.contains(ConfigurationOptionTypeFlag::String) {
 							Some(EditorState::TextInput)
 						} else {
-							optionEditorState
+							option_editor_state
 						}
 					}
 					(EditorState::SelectValueOrNone, EditorEvent::SelectedNone) => {
-						let selected = self.selectedConfigurationOption.clone().expect("");
-						if selected.r#type == ConfigurationOptionTypeFlag::U16 {
+						let selected = self.selected_configuration_option.clone().expect("");
+						if selected.r#type.contains(ConfigurationOptionTypeFlag::U16) {
 							let none = ConfigurationOptionType::OptionU16(None);
 							self.set_option_value(none);
-						} else if selected.r#type == ConfigurationOptionTypeFlag::String {
+						} else if selected.r#type.contains(ConfigurationOptionTypeFlag::String) {
 							let none = ConfigurationOptionType::OptionString(None);
 							self.set_option_value(none);
 						}
 						self.state = AppState::ChoiceMenu;
 						None
 					}
-					_ => optionEditorState,
+					_ => option_editor_state,
 				}
 			}
 		}
