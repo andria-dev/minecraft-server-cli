@@ -1,9 +1,0 @@
-{
-  "name": "minecraft-server-cli",
-  "version": "0.0.1",
-  "description": "An interactive CLI designed to make running your Minecraft server easier.",
-  "main": "index.js",
-  "author": "Chris Brown <chris_brown@hey.com>",
-  "license": "MIT",
-  "private": false
-}

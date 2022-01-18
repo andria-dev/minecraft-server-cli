@@ -205,7 +205,7 @@ fn run_server(configuration: MinecraftServerConfiguration, jar_filename: String,
 fn main() {
 	let matches = App::new("minecraft-server-cli")
 		.version("0.1.0")
-    .author("Chris Brown <chris_brown@hey.com>")
+    .author("Andria Brown <andria_girl@pm.me>")
     .about("A command-line interface used to edit and persist your Minecraft server command-line settings and start your Minecraft server.")
 		.arg(Arg::with_name("jar_filename")
 			.index(1)

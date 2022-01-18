@@ -4,7 +4,7 @@ This is a CLI tool used to edit and persist your Minecraft server command-line s
 
 ## Installation
 
-In order to install the `minecraft-server-cli` tool, you need to [download one of the binaries](https://github.com/ChrisBrownie55/minecraft-server-cli/releases/tag/0.1.0) or build it yourself using the `cargo build` command and then locate the binary at `./target/debug/minecraft-server-cli`
+In order to install the `minecraft-server-cli` tool, you need to [download one of the binaries](https://github.com/andria-dev/minecraft-server-cli/releases/tag/0.1.0) or build it yourself using the `cargo build` command and then locate the binary at `./target/debug/minecraft-server-cli`
 
 ## Usage
 
